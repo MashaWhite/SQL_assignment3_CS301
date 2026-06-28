@@ -90,3 +90,141 @@ as $$
     where product_id = (select product_id from new_data)
 $$;
 
+--функція розрахунку коректної загальної суми замовлення для tigger
+--тут я вже почала використовувати plpgsql, тому що тут легше через умови зробити
+create or replace function update_order_total()
+returns trigger
+language plpgsql
+as $$
+declare
+	correct_order_id int;
+begin
+	--tg_op відповідає за те, яка саме причина була у виклику цього tigger
+	--new повертає old повертає
+	--якщо delete, то потрібно викликати old, тому що new є null
+	--якщо update або insert,то new
+	if TG_OP = 'DELETE' then 
+		correct_order_id := old.order_id;
+	else 
+		correct_order_id := new.order_id;
+	end if;
+
+	--оновлення total_amount
+	update orders
+	set total_amount = calculate_order_total(correct_order_id)
+	where order_id = correct_order_id;
+	
+	--функція повинна повертати тип tigger
+	if TG_OP = 'DELETE' then 
+		return old;
+	else 
+		return new;
+	end if;
+end;	
+$$;
+--trigger, що оновлює суму замовлення, коли додають, видаляюьб або змінюють дані
+create trigger udate_order_total
+--для зміни, вставки, видалення
+after update or insert or delete on order_items
+for each row
+--trigger повинен викликати функцію, що повертає тип tigger
+execute function update_order_total();
+
+
+--функція для trigger, що записує логи при створенні нового order
+create or replace function log_order_created()
+returns trigger
+language plpgsql
+as $$
+begin
+	--вставляємо новий запис в order_log
+	--використовуємо new, тому що це tigger для insert
+	insert into order_log(order_id, customer_id, action, log_date)
+	values(new.order_id, new.customer_id, 'new order created', current_timestamp);
+	return new;
+end;	
+$$;
+--сам trigger
+create trigger log_order_created
+--срацбовує після insert
+after insert on orders
+for each row
+execute function log_order_created();
+
+
+-----------------тестування-------------
+--1.створення customer
+insert into customers(full_name, email, balance) values('Alice Taylor', 'ataylor@gamil.com', 5000.00);
+--перевірка
+select * from customers;
+--2.сворення product
+insert into products(product_name, price, stock_quantity) values('Phone', 200.00, 50);
+--перевірка
+select * from products;
+
+--3.поцедура додавання orders
+--вивести всі замовлення
+select * from orders;
+--додати нове замовлення для користувача з id=1
+call create_order(1);
+--превірка, що замовлення додалось
+select * from orders;
+
+--4.поцедура додавання product до orders
+--вивести всі продукти замовлення з id=1
+select * from order_items where order_id = 1;
+--додати продукт до замовлення(id продукту=1, категорія 1, кількість 1, ціна розраховується сама)
+call add_product_to_order(1, 1, 1);
+--перевірка
+select * from order_items where order_id = 1;
+
+--5-6.загальна сума замовлення та кількість товару автоматично оновлюються
+
+-----1) при insert
+-----вивести total_amount для order з id=1 та калькість products з id=1
+select 
+	(select total_amount from orders where order_id = 1),
+	(select stock_quantity from products where product_id = 1);
+-----додати продукт до замовлення
+call add_product_to_order(1, 1, 1);
+-----перевірити, чи змінилось total_amount та stock_quantity
+select 
+	(select total_amount from orders where order_id = 1),
+	(select stock_quantity from products where product_id = 1);
+
+-----2) при update
+select total_amount from orders where order_id = 2;
+-----оновити всі ціни для продуктів з order з id = 2
+update order_items
+	set price = 10 
+	where order_id = 2
+select total_amount from orders where order_id = 2;
+
+----3) при delete
+select * from order_items;
+select total_amount from orders where order_id = 1;
+delete from order_items where order_id = 1;
+select total_amount from orders where order_id = 1;
+--але при update і delete на прикладі total_amount оновиться тільки при першому виконанні
+
+
+--6.
+--вивести всі наявні логи
+select * from order_log;
+--вставити нові дані в orders
+insert into orders(customer_id) values (1);
+--перевірити зміни в логах
+select * from order_log;
+-----------------------------------------------------------------------
+
+--query analysis
+explain analyze
+select
+    oi.order_id,
+    p.product_name,
+    oi.quantity,
+    oi.price,
+    oi.quantity * oi.price as item_total
+from order_items oi
+join products p on oi.product_id = p.product_id
+where oi.order_id = 2;
