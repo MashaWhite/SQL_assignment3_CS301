@@ -1,0 +1,21 @@
+Hash Join  (cost=27.09..41.32 rows=7 width=274) (actual time=0.047..0.049 rows=2.00 loops=1)
+  Hash Cond: (p.product_id = oi.product_id)
+  Buffers: shared hit=2
+  ->  Seq Scan on products p  (cost=0.00..13.00 rows=300 width=222) (actual time=0.016..0.017 rows=6.00 loops=1)
+        Buffers: shared hit=1
+  ->  Hash  (cost=27.00..27.00 rows=7 width=28) (actual time=0.022..0.022 rows=2.00 loops=1)
+        Buckets: 1024  Batches: 1  Memory Usage: 9kB
+        Buffers: shared hit=1
+        ->  Seq Scan on order_items oi  (cost=0.00..27.00 rows=7 width=28) (actual time=0.008..0.008 rows=2.00 loops=1)
+              Filter: (order_id = 2)
+              Rows Removed by Filter: 1
+              Buffers: shared hit=1
+Planning Time: 0.161 ms
+Execution Time: 0.083 ms
+
+Запит був виконаний за 0.083 ms
+Планування було виконане за 0.161 ms
+Спочатку відбувся Seq scan на order_items. Вся інформація бралася з кешу, звертання до диску не було (Buffers: shared hit=1)
+Було оброблено 3 рядка, з яких 1 відкинутий через фільтр. Після фільтрації на основі order_items був створений hash.
+Потім Seq Scan на products, знову все з кешу, оброблено 6 рядків.
+Виконався hash join. - поєднання таблиць за умовою (p.product_id = oi.product_id).
