@@ -42,3 +42,51 @@ create table order_log (
     action varchar(50),
     log_date timestamp default current_timestamp
 );
+
+--функція, що рахує загальну суму замовлення
+create or replace function calculate_order_total(p_order_id int)
+returns numeric
+language sql
+as $$
+--coalesce повертає 0, якщо такого замовлення не існує
+--загальна сума = ціна*кількість
+    select coalesce(sum(price*quantity), 0) as order_total
+	from order_items 
+	where order_id = p_order_id
+$$;
+
+--процедура для створення замовлення для користувача з заданим id
+create or replace procedure create_order(p_customer_id int)
+language sql
+as $$
+--по дефолту значення дати це поточна дата, а ціна 0 - так як потрібно
+--тому в ці поля нічого не вставляємо
+    insert into orders(customer_id)
+    select customer_id from customers where customer_id = p_customer_id
+$$;
+
+
+--процедура для додавання продукту до існуючого замовлення
+create or replace procedure add_product_to_order(
+    p_order_id int,
+    p_product_id int,
+    p_quantity int
+    )
+language sql
+as $$
+--створила cte(порада ші), щоб зберегти звідти product_id - якщо його не існує, то буде null і нічого не виконається
+    with new_data as(
+    --вставляю дані в order_items
+        insert into order_items(order_id, product_id, quantity, price)
+        select p_order_id, product_id, p_quantity, price
+        from products
+    --перевірка умов: product_id існує, потрібна кількість товару є, потрібна кількість  > 0
+        where (product_id = p_product_id) and (stock_quantity >= p_quantity) and (p_quantity > 0)
+        returning product_id
+    )
+--оновлюю інфорамцію про кількість товару
+    update products
+    set stock_quantity = stock_quantity - p_quantity
+    where product_id = (select product_id from new_data)
+$$;
+
